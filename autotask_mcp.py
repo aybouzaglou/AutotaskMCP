@@ -89,15 +89,17 @@ def _make_request(
                 }
             
             if response.text:
-                return response.json()
+                try:
+                    return response.json()
+                except json.JSONDecodeError:
+                    return {"error": "Failed to parse API response", "raw_response": response.text}
             return {"success": True}
             
     except httpx.TimeoutException:
         return {"error": "Request timed out"}
     except httpx.RequestError as e:
         return {"error": f"Request failed: {str(e)}"}
-    except json.JSONDecodeError:
-        return {"error": "Failed to parse API response", "raw_response": response.text}
+
 
 
 def _query_entity(entity: str, filters: List[Dict], fields: Optional[List[str]] = None) -> Dict[str, Any]:
@@ -112,7 +114,7 @@ def _query_entity(entity: str, filters: List[Dict], fields: Optional[List[str]] 
     Returns:
         API response dictionary
     """
-    query_body = {"filter": filters}
+    query_body: Dict[str, Any] = {"filter": filters}
     if fields:
         query_body["includeFields"] = fields
     
