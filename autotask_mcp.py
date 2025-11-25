@@ -35,6 +35,9 @@ AUTOTASK_USERNAME = os.getenv("AUTOTASK_USERNAME", "")
 AUTOTASK_SECRET = os.getenv("AUTOTASK_SECRET", "")
 AUTOTASK_INTEGRATION_CODE = os.getenv("AUTOTASK_INTEGRATION_CODE", "")
 AUTOTASK_API_URL = os.getenv("AUTOTASK_API_URL", "https://webservices16.autotask.net/ATServicesRest/v1.0")
+# Optional: Impersonate a specific resource for all API calls (Resource ID)
+# SECURITY NOTE: If set, ALL actions performed by this server will be attributed to this resource.
+AUTOTASK_IMPERSONATION_RESOURCE_ID = os.getenv("AUTOTASK_IMPERSONATION_RESOURCE_ID", "")
 
 API_TIMEOUT = 30.0
 MAX_PAGE_SIZE = 500
@@ -45,12 +48,18 @@ MAX_PAGE_SIZE = 500
 
 def _get_headers() -> Dict[str, str]:
     """Get authentication headers for Autotask API requests."""
-    return {
+    headers = {
         "Content-Type": "application/json",
         "UserName": AUTOTASK_USERNAME,
         "Secret": AUTOTASK_SECRET,
         "ApiIntegrationCode": AUTOTASK_INTEGRATION_CODE,
     }
+    
+    # Add impersonation header if configured
+    if AUTOTASK_IMPERSONATION_RESOURCE_ID:
+        headers["ImpersonationResourceId"] = AUTOTASK_IMPERSONATION_RESOURCE_ID
+        
+    return headers
 
 
 def _make_request(
@@ -861,5 +870,13 @@ if __name__ == "__main__":
         print("  - AUTOTASK_SECRET")
         print("  - AUTOTASK_INTEGRATION_CODE")
         print("  - AUTOTASK_API_URL (optional, defaults to webservices16)")
+        print("  - AUTOTASK_IMPERSONATION_RESOURCE_ID (optional, for attribution)")
     
+    # Security / Configuration Audit Log
+    if AUTOTASK_IMPERSONATION_RESOURCE_ID:
+        print(f"⚠️  SECURITY NOTICE: Impersonation ENABLED.")
+        print(f"   All actions will be attributed to Resource ID: {AUTOTASK_IMPERSONATION_RESOURCE_ID}")
+    else:
+        print("ℹ️  Impersonation DISABLED. Actions will be attributed to the API User.")
+
     mcp.run()
