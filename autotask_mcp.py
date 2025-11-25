@@ -18,13 +18,14 @@ Authentication: Uses username, secret, and API integration code in headers.
 import os
 import json
 import httpx
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Annotated
 from datetime import datetime, timezone
 from pydantic import BaseModel, Field
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
+from fastmcp.exceptions import ToolError
 
 # Initialize MCP server
-mcp = FastMCP("autotask")
+mcp = FastMCP("autotask", mask_error_details=True)
 
 # =============================================================================
 # CONFIGURATION
@@ -136,11 +137,6 @@ def _format_date_for_api(dt: Optional[datetime] = None) -> str:
 # INPUT MODELS
 # =============================================================================
 
-class GetTicketInput(BaseModel):
-    """Input for getting a ticket by ID."""
-    ticket_id: int = Field(..., description="The ticket ID to retrieve")
-
-
 class SearchTicketsInput(BaseModel):
     """Input for searching tickets."""
     company_id: Optional[int] = Field(None, description="Filter by company ID")
@@ -241,11 +237,6 @@ class SearchCompaniesInput(BaseModel):
     max_results: Optional[int] = Field(50, description="Maximum number of results")
 
 
-class GetCompanyInput(BaseModel):
-    """Input for getting a company by ID."""
-    company_id: int = Field(..., description="The company ID to retrieve")
-
-
 class SearchContactsInput(BaseModel):
     """Input for searching contacts."""
     company_id: Optional[int] = Field(None, description="Filter by company ID")
@@ -264,35 +255,25 @@ class SearchResourcesInput(BaseModel):
     max_results: Optional[int] = Field(50, description="Maximum number of results")
 
 
-class GetResourceInput(BaseModel):
-    """Input for getting a resource by ID."""
-    resource_id: int = Field(..., description="The resource ID to retrieve")
-
-
-class GetPicklistValuesInput(BaseModel):
-    """Input for getting picklist values for a field."""
-    entity: str = Field(..., description="Entity name (e.g., 'Tickets', 'TicketNotes', 'TimeEntries')")
-    field: str = Field(..., description="Field name (e.g., 'status', 'priority', 'noteType', 'publish')")
-
-
 # =============================================================================
 # TOOLS - TICKETS
 # =============================================================================
 
-@mcp.tool()
-async def autotask_get_ticket(params: GetTicketInput) -> str:
+@mcp.tool
+async def autotask_get_ticket(
+    ticket_id: Annotated[int, Field(description="The ticket ID to retrieve")]
+) -> dict:
     """Get a ticket by ID from Autotask."""
-    result = _make_request("GET", f"Tickets/{params.ticket_id}")
+    result = _make_request("GET", f"Tickets/{ticket_id}")
     
     if "error" in result:
-        return f"Error: {result['error']}\nDetails: {result.get('response_text', 'No details')}"
+        raise ToolError(f"Failed to get ticket {ticket_id}: {result['error']}")
     
-    ticket = result.get("item", result)
-    return json.dumps(ticket, indent=2)
+    return result.get("item", result)
 
 
-@mcp.tool()
-async def autotask_search_tickets(params: SearchTicketsInput) -> str:
+@mcp.tool
+async def autotask_search_tickets(params: SearchTicketsInput) -> dict:
     """Search for tickets in Autotask with various filters."""
     filters = []
     
@@ -316,17 +297,17 @@ async def autotask_search_tickets(params: SearchTicketsInput) -> str:
     result = _query_entity("Tickets", filters)
     
     if "error" in result:
-        return f"Error: {result['error']}\nDetails: {result.get('response_text', 'No details')}"
+        raise ToolError(f"Failed to search tickets: {result['error']}")
     
     items = result.get("items", [])
     if params.max_results:
         items = items[:params.max_results]
     
-    return json.dumps({"count": len(items), "tickets": items}, indent=2)
+    return {"count": len(items), "tickets": items}
 
 
-@mcp.tool()
-async def autotask_create_ticket(params: CreateTicketInput) -> str:
+@mcp.tool
+async def autotask_create_ticket(params: CreateTicketInput) -> dict:
     """Create a new ticket in Autotask."""
     ticket_data = {
         "title": params.title,
@@ -350,15 +331,14 @@ async def autotask_create_ticket(params: CreateTicketInput) -> str:
     result = _make_request("POST", "Tickets", data=ticket_data)
     
     if "error" in result:
-        return f"Error creating ticket: {result['error']}\nDetails: {result.get('response_text', 'No details')}"
+        raise ToolError(f"Failed to create ticket: {result['error']}")
     
     item = result.get("item", result)
-    ticket_id = item.get("id", "unknown")
-    return f"Ticket created successfully!\nTicket ID: {ticket_id}\n\nFull response:\n{json.dumps(item, indent=2)}"
+    return {"success": True, "ticket_id": item.get("id"), "ticket": item}
 
 
-@mcp.tool()
-async def autotask_update_ticket(params: UpdateTicketInput) -> str:
+@mcp.tool
+async def autotask_update_ticket(params: UpdateTicketInput) -> dict:
     """
     Update an existing ticket in Autotask.
     
@@ -369,12 +349,12 @@ async def autotask_update_ticket(params: UpdateTicketInput) -> str:
     # First, get the current ticket to include required fields
     current = _make_request("GET", f"Tickets/{params.ticket_id}")
     if "error" in current:
-        return f"Error fetching ticket: {current['error']}\nDetails: {current.get('response_text', 'No details')}"
+        raise ToolError(f"Failed to fetch ticket {params.ticket_id}: {current['error']}")
     
     ticket = current.get("item", current)
     
     # Build update payload - must include id
-    update_data = {"id": params.ticket_id}
+    update_data: Dict[str, Any] = {"id": params.ticket_id}
     
     if params.title is not None:
         update_data["title"] = params.title
@@ -396,18 +376,18 @@ async def autotask_update_ticket(params: UpdateTicketInput) -> str:
     result = _make_request("PATCH", "Tickets", data=update_data)
     
     if "error" in result:
-        return f"Error updating ticket: {result['error']}\nDetails: {result.get('response_text', 'No details')}"
+        raise ToolError(f"Failed to update ticket {params.ticket_id}: {result['error']}")
     
     item = result.get("item", result)
-    return f"Ticket {params.ticket_id} updated successfully!\n\nUpdated fields:\n{json.dumps(update_data, indent=2)}\n\nFull response:\n{json.dumps(item, indent=2)}"
+    return {"success": True, "ticket_id": params.ticket_id, "updated_fields": update_data, "ticket": item}
 
 
 # =============================================================================
 # TOOLS - TICKET NOTES
 # =============================================================================
 
-@mcp.tool()
-async def autotask_create_ticket_note(params: CreateTicketNoteInput) -> str:
+@mcp.tool
+async def autotask_create_ticket_note(params: CreateTicketNoteInput) -> dict:
     """
     Create a note on a ticket in Autotask.
     
@@ -445,19 +425,18 @@ async def autotask_create_ticket_note(params: CreateTicketNoteInput) -> str:
     result = _make_request("POST", "TicketNotes", data=note_data)
     
     if "error" in result:
-        return f"Error creating ticket note: {result['error']}\nDetails: {result.get('response_text', 'No details')}\n\nRequest data:\n{json.dumps(note_data, indent=2)}"
+        raise ToolError(f"Failed to create ticket note: {result['error']}")
     
     item = result.get("item", result)
-    note_id = item.get("id", "unknown")
-    return f"Ticket note created successfully!\nNote ID: {note_id}\nTicket ID: {params.ticket_id}\n\nFull response:\n{json.dumps(item, indent=2)}"
+    return {"success": True, "note_id": item.get("id"), "ticket_id": params.ticket_id, "note": item}
 
 
 # =============================================================================
 # TOOLS - TIME ENTRIES
 # =============================================================================
 
-@mcp.tool()
-async def autotask_create_time_entry(params: CreateTimeEntryInput) -> str:
+@mcp.tool
+async def autotask_create_time_entry(params: CreateTimeEntryInput) -> dict:
     """
     Create a time entry in Autotask.
     
@@ -479,13 +458,13 @@ async def autotask_create_time_entry(params: CreateTimeEntryInput) -> str:
     - Contract must be active and associated with the ticket's company
     """
     if not params.ticket_id and not params.task_id:
-        return "Error: Either ticket_id or task_id is required"
+        raise ToolError("Either ticket_id or task_id is required")
     
     if params.ticket_id and params.task_id:
-        return "Error: Provide either ticket_id OR task_id, not both"
+        raise ToolError("Provide either ticket_id OR task_id, not both")
     
     if params.hours_worked <= 0 or params.hours_worked > 24:
-        return "Error: hours_worked must be > 0 and <= 24"
+        raise ToolError("hours_worked must be > 0 and <= 24")
     
     # Build the time entry data
     time_entry_data = {
@@ -523,19 +502,24 @@ async def autotask_create_time_entry(params: CreateTimeEntryInput) -> str:
     result = _make_request("POST", "TimeEntries", data=time_entry_data)
     
     if "error" in result:
-        return f"Error creating time entry: {result['error']}\nDetails: {result.get('response_text', 'No details')}\n\nRequest data:\n{json.dumps(time_entry_data, indent=2)}"
+        raise ToolError(f"Failed to create time entry: {result['error']}")
     
     item = result.get("item", result)
-    entry_id = item.get("id", "unknown")
-    return f"Time entry created successfully!\nTime Entry ID: {entry_id}\nHours: {params.hours_worked}\nTicket/Task: {params.ticket_id or params.task_id}\n\nFull response:\n{json.dumps(item, indent=2)}"
+    return {
+        "success": True,
+        "time_entry_id": item.get("id"),
+        "hours": params.hours_worked,
+        "ticket_or_task_id": params.ticket_id or params.task_id,
+        "time_entry": item
+    }
 
 
 # =============================================================================
 # TOOLS - COMPANIES
 # =============================================================================
 
-@mcp.tool()
-async def autotask_search_companies(params: SearchCompaniesInput) -> str:
+@mcp.tool
+async def autotask_search_companies(params: SearchCompaniesInput) -> dict:
     """Search for companies in Autotask."""
     filters = []
     
@@ -550,33 +534,34 @@ async def autotask_search_companies(params: SearchCompaniesInput) -> str:
     result = _query_entity("Companies", filters)
     
     if "error" in result:
-        return f"Error: {result['error']}\nDetails: {result.get('response_text', 'No details')}"
+        raise ToolError(f"Failed to search companies: {result['error']}")
     
     items = result.get("items", [])
     if params.max_results:
         items = items[:params.max_results]
     
-    return json.dumps({"count": len(items), "companies": items}, indent=2)
+    return {"count": len(items), "companies": items}
 
 
-@mcp.tool()
-async def autotask_get_company(params: GetCompanyInput) -> str:
+@mcp.tool
+async def autotask_get_company(
+    company_id: Annotated[int, Field(description="The company ID to retrieve")]
+) -> dict:
     """Get a company by ID from Autotask."""
-    result = _make_request("GET", f"Companies/{params.company_id}")
+    result = _make_request("GET", f"Companies/{company_id}")
     
     if "error" in result:
-        return f"Error: {result['error']}\nDetails: {result.get('response_text', 'No details')}"
+        raise ToolError(f"Failed to get company {company_id}: {result['error']}")
     
-    company = result.get("item", result)
-    return json.dumps(company, indent=2)
+    return result.get("item", result)
 
 
 # =============================================================================
 # TOOLS - CONTACTS
 # =============================================================================
 
-@mcp.tool()
-async def autotask_search_contacts(params: SearchContactsInput) -> str:
+@mcp.tool
+async def autotask_search_contacts(params: SearchContactsInput) -> dict:
     """Search for contacts in Autotask."""
     filters = []
     
@@ -595,21 +580,21 @@ async def autotask_search_contacts(params: SearchContactsInput) -> str:
     result = _query_entity("Contacts", filters)
     
     if "error" in result:
-        return f"Error: {result['error']}\nDetails: {result.get('response_text', 'No details')}"
+        raise ToolError(f"Failed to search contacts: {result['error']}")
     
     items = result.get("items", [])
     if params.max_results:
         items = items[:params.max_results]
     
-    return json.dumps({"count": len(items), "contacts": items}, indent=2)
+    return {"count": len(items), "contacts": items}
 
 
 # =============================================================================
 # TOOLS - RESOURCES
 # =============================================================================
 
-@mcp.tool()
-async def autotask_search_resources(params: SearchResourcesInput) -> str:
+@mcp.tool
+async def autotask_search_resources(params: SearchResourcesInput) -> dict:
     """Search for resources (users/technicians) in Autotask."""
     filters = []
     
@@ -628,33 +613,37 @@ async def autotask_search_resources(params: SearchResourcesInput) -> str:
     result = _query_entity("Resources", filters)
     
     if "error" in result:
-        return f"Error: {result['error']}\nDetails: {result.get('response_text', 'No details')}"
+        raise ToolError(f"Failed to search resources: {result['error']}")
     
     items = result.get("items", [])
     if params.max_results:
         items = items[:params.max_results]
     
-    return json.dumps({"count": len(items), "resources": items}, indent=2)
+    return {"count": len(items), "resources": items}
 
 
-@mcp.tool()
-async def autotask_get_resource(params: GetResourceInput) -> str:
+@mcp.tool
+async def autotask_get_resource(
+    resource_id: Annotated[int, Field(description="The resource ID to retrieve")]
+) -> dict:
     """Get a resource by ID from Autotask."""
-    result = _make_request("GET", f"Resources/{params.resource_id}")
+    result = _make_request("GET", f"Resources/{resource_id}")
     
     if "error" in result:
-        return f"Error: {result['error']}\nDetails: {result.get('response_text', 'No details')}"
+        raise ToolError(f"Failed to get resource {resource_id}: {result['error']}")
     
-    resource = result.get("item", result)
-    return json.dumps(resource, indent=2)
+    return result.get("item", result)
 
 
 # =============================================================================
 # TOOLS - PICKLIST VALUES
 # =============================================================================
 
-@mcp.tool()
-async def autotask_get_picklist_values(params: GetPicklistValuesInput) -> str:
+@mcp.tool
+async def autotask_get_picklist_values(
+    entity: Annotated[str, Field(description="Entity name (e.g., 'Tickets', 'TicketNotes', 'TimeEntries')")],
+    field: Annotated[str, Field(description="Field name (e.g., 'status', 'priority', 'noteType', 'publish')")]
+) -> dict:
     """
     Get picklist values for a field in Autotask.
     
@@ -669,43 +658,40 @@ async def autotask_get_picklist_values(params: GetPicklistValuesInput) -> str:
     
     Example: entity="Tickets", field="status"
     """
-    result = _make_request("GET", f"{params.entity}/entityInformation/fields")
+    result = _make_request("GET", f"{entity}/entityInformation/fields")
     
     if "error" in result:
-        return f"Error: {result['error']}\nDetails: {result.get('response_text', 'No details')}"
+        raise ToolError(f"Failed to get picklist values for {entity}/{field}: {result['error']}")
     
     fields = result.get("fields", [])
     
     # Find the specific field
     target_field = None
-    for field in fields:
-        if field.get("name", "").lower() == params.field.lower():
-            target_field = field
+    for f in fields:
+        if f.get("name", "").lower() == field.lower():
+            target_field = f
             break
     
     if not target_field:
         available_fields = [f.get("name") for f in fields if f.get("isPickList")]
-        return f"Field '{params.field}' not found in {params.entity}.\n\nAvailable picklist fields:\n{json.dumps(available_fields, indent=2)}"
+        raise ToolError(f"Field '{field}' not found in {entity}. Available picklist fields: {available_fields}")
     
     if not target_field.get("isPickList"):
-        return f"Field '{params.field}' is not a picklist field."
+        raise ToolError(f"Field '{field}' is not a picklist field.")
     
     picklist_values = target_field.get("picklistValues", [])
-    return f"Picklist values for {params.entity}/{params.field}:\n\n{json.dumps(picklist_values, indent=2)}"
+    return {"entity": entity, "field": field, "values": picklist_values}
 
 
 # =============================================================================
 # TOOLS - ROLES (needed for time entries)
 # =============================================================================
 
-class SearchRolesInput(BaseModel):
-    """Input for searching roles."""
-    is_active: Optional[bool] = Field(True, description="Filter by active status")
-    max_results: Optional[int] = Field(50, description="Maximum number of results")
-
-
-@mcp.tool()
-async def autotask_search_roles(params: SearchRolesInput) -> str:
+@mcp.tool
+async def autotask_search_roles(
+    is_active: Annotated[Optional[bool], Field(default=True, description="Filter by active status")] = True,
+    max_results: Annotated[Optional[int], Field(default=50, description="Maximum number of results")] = 50
+) -> dict:
     """
     Search for roles in Autotask.
     
@@ -714,8 +700,8 @@ async def autotask_search_roles(params: SearchRolesInput) -> str:
     """
     filters = []
     
-    if params.is_active is not None:
-        filters.append({"field": "isActive", "op": "eq", "value": params.is_active})
+    if is_active is not None:
+        filters.append({"field": "isActive", "op": "eq", "value": is_active})
     
     if not filters:
         filters.append({"field": "isActive", "op": "eq", "value": True})
@@ -723,13 +709,13 @@ async def autotask_search_roles(params: SearchRolesInput) -> str:
     result = _query_entity("Roles", filters)
     
     if "error" in result:
-        return f"Error: {result['error']}\nDetails: {result.get('response_text', 'No details')}"
+        raise ToolError(f"Failed to search roles: {result['error']}")
     
     items = result.get("items", [])
-    if params.max_results:
-        items = items[:params.max_results]
+    if max_results:
+        items = items[:max_results]
     
-    return json.dumps({"count": len(items), "roles": items}, indent=2)
+    return {"count": len(items), "roles": items}
 
 
 # =============================================================================
@@ -745,8 +731,8 @@ class UpdateTicketStatusAndNoteInput(BaseModel):
     publish: int = Field(1, description="Note publish setting (default: 1 = All Autotask Users)")
 
 
-@mcp.tool()
-async def autotask_update_ticket_status_with_note(params: UpdateTicketStatusAndNoteInput) -> str:
+@mcp.tool
+async def autotask_update_ticket_status_with_note(params: UpdateTicketStatusAndNoteInput) -> dict:
     """
     Update a ticket's status and add a note in one operation.
     
@@ -766,10 +752,11 @@ async def autotask_update_ticket_status_with_note(params: UpdateTicketStatusAndN
     update_data = {"id": params.ticket_id, "status": params.status}
     status_result = _make_request("PATCH", "Tickets", data=update_data)
     
-    if "error" in status_result:
-        results.append(f"❌ Status update failed: {status_result['error']}\nDetails: {status_result.get('response_text', 'No details')}")
+    status_success = "error" not in status_result
+    if not status_success:
+        results.append({"step": "status_update", "success": False, "error": status_result['error']})
     else:
-        results.append(f"✅ Status updated to {params.status}")
+        results.append({"step": "status_update", "success": True, "new_status": params.status})
     
     # Step 2: Add note
     note_data = {
@@ -780,13 +767,18 @@ async def autotask_update_ticket_status_with_note(params: UpdateTicketStatusAndN
     }
     note_result = _make_request("POST", "TicketNotes", data=note_data)
     
-    if "error" in note_result:
-        results.append(f"❌ Note creation failed: {note_result['error']}\nDetails: {note_result.get('response_text', 'No details')}")
+    note_success = "error" not in note_result
+    if not note_success:
+        results.append({"step": "note_creation", "success": False, "error": note_result['error']})
     else:
-        note_id = note_result.get("item", {}).get("id", "unknown")
-        results.append(f"✅ Note added (ID: {note_id})")
+        note_id = note_result.get("item", {}).get("id")
+        results.append({"step": "note_creation", "success": True, "note_id": note_id})
     
-    return f"Ticket {params.ticket_id} update results:\n\n" + "\n".join(results)
+    return {
+        "ticket_id": params.ticket_id,
+        "all_succeeded": status_success and note_success,
+        "results": results
+    }
 
 
 class LogTimeAndUpdateStatusInput(BaseModel):
@@ -800,8 +792,8 @@ class LogTimeAndUpdateStatusInput(BaseModel):
     date_worked: Optional[str] = Field(None, description="Date worked (defaults to today)")
 
 
-@mcp.tool()
-async def autotask_log_time_and_update_status(params: LogTimeAndUpdateStatusInput) -> str:
+@mcp.tool
+async def autotask_log_time_and_update_status(params: LogTimeAndUpdateStatusInput) -> dict:
     """
     Log time to a ticket and optionally update its status.
     
@@ -828,23 +820,30 @@ async def autotask_log_time_and_update_status(params: LogTimeAndUpdateStatusInpu
     
     time_result = _make_request("POST", "TimeEntries", data=time_entry_data)
     
-    if "error" in time_result:
-        results.append(f"❌ Time entry failed: {time_result['error']}\nDetails: {time_result.get('response_text', 'No details')}\n\nRequest data:\n{json.dumps(time_entry_data, indent=2)}")
+    time_success = "error" not in time_result
+    if not time_success:
+        results.append({"step": "time_entry", "success": False, "error": time_result['error']})
     else:
-        entry_id = time_result.get("item", {}).get("id", "unknown")
-        results.append(f"✅ Time entry created (ID: {entry_id}) - {params.hours_worked} hours")
+        entry_id = time_result.get("item", {}).get("id")
+        results.append({"step": "time_entry", "success": True, "time_entry_id": entry_id, "hours": params.hours_worked})
     
     # Step 2: Update status if requested
+    status_success = True
     if params.new_status is not None:
         update_data = {"id": params.ticket_id, "status": params.new_status}
         status_result = _make_request("PATCH", "Tickets", data=update_data)
         
-        if "error" in status_result:
-            results.append(f"❌ Status update failed: {status_result['error']}\nDetails: {status_result.get('response_text', 'No details')}")
+        status_success = "error" not in status_result
+        if not status_success:
+            results.append({"step": "status_update", "success": False, "error": status_result['error']})
         else:
-            results.append(f"✅ Status updated to {params.new_status}")
+            results.append({"step": "status_update", "success": True, "new_status": params.new_status})
     
-    return f"Ticket {params.ticket_id} operations:\n\n" + "\n".join(results)
+    return {
+        "ticket_id": params.ticket_id,
+        "all_succeeded": time_success and status_success,
+        "results": results
+    }
 
 
 # =============================================================================
