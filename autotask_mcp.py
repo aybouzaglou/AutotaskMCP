@@ -172,12 +172,12 @@ def _format_date_for_api(dt: Optional[datetime] = None) -> str:
 class SearchTicketsInput(BaseModel):
     """Input for searching tickets."""
     company_id: Optional[int] = Field(None, description="Filter by company ID")
-    status: Optional[int] = Field(None, description="Filter by status ID")
+    status: Optional[int] = Field(None, description="Filter by status ID (1=New, 5=Complete, 7=Waiting Customer, 8=In Progress, 11=Escalate, 15=Scheduled)")
     priority: Optional[int] = Field(None, description="Filter by priority ID")
     assigned_resource_id: Optional[int] = Field(None, description="Filter by assigned resource ID")
     queue_id: Optional[int] = Field(None, description="Filter by queue ID")
     title_contains: Optional[str] = Field(None, description="Filter by title containing this text")
-    exclude_completed: Optional[bool] = Field(True, description="Exclude completed tickets (default: True)")
+    exclude_completed: bool = Field(default=True, description="Exclude completed tickets (status=5). Set to False to include completed.")
     max_results: Optional[int] = Field(50, description="Maximum number of results to return")
 
 
@@ -314,7 +314,24 @@ async def autotask_get_ticket(
 
 @mcp.tool
 async def autotask_search_tickets(params: SearchTicketsInput, ctx: Context | None = None) -> dict:
-    """Search for tickets in Autotask with various filters."""
+    """
+    Search for tickets in Autotask with various filters.
+    
+    Status IDs:
+    - 1 = New
+    - 5 = Complete
+    - 7 = Waiting Customer
+    - 8 = In Progress
+    - 11 = Escalate
+    - 15 = Scheduled
+    - 19 = Customer Note Added
+    - 20 = Manager Note Added
+    - 21 = To Be Closed
+    - 23 = Re-Opened by Client
+    - 26 = Client Cancelled
+    
+    By default, completed tickets (status=5) are excluded. Set exclude_completed=False to include them.
+    """
     filters = []
     
     if params.company_id:
@@ -330,8 +347,9 @@ async def autotask_search_tickets(params: SearchTicketsInput, ctx: Context | Non
     if params.title_contains:
         filters.append({"op": "contains", "field": "title", "value": params.title_contains})
     
-    # Exclude completed tickets by default (status 5 is typically Complete)
-    if params.exclude_completed:
+    # Exclude completed tickets by default (status 5 = Complete)
+    # Only skip if user explicitly sets status filter OR sets exclude_completed=False
+    if params.exclude_completed and not params.status:
         filters.append({"op": "notequal", "field": "status", "value": 5})
     
     if not filters:
