@@ -177,6 +177,7 @@ class SearchTicketsInput(BaseModel):
     assigned_resource_id: Optional[int] = Field(None, description="Filter by assigned resource ID")
     queue_id: Optional[int] = Field(None, description="Filter by queue ID")
     title_contains: Optional[str] = Field(None, description="Filter by title containing this text")
+    exclude_completed: Optional[bool] = Field(True, description="Exclude completed tickets (default: True)")
     max_results: Optional[int] = Field(50, description="Maximum number of results to return")
 
 
@@ -275,6 +276,7 @@ class SearchContactsInput(BaseModel):
     email_contains: Optional[str] = Field(None, description="Filter by email containing this text")
     first_name: Optional[str] = Field(None, description="Filter by first name")
     last_name: Optional[str] = Field(None, description="Filter by last name")
+    is_active: Optional[bool] = Field(True, description="Filter by active status (default: True)")
     max_results: Optional[int] = Field(50, description="Maximum number of results")
 
 
@@ -327,6 +329,10 @@ async def autotask_search_tickets(params: SearchTicketsInput, ctx: Context | Non
         filters.append({"op": "eq", "field": "queueID", "value": params.queue_id})
     if params.title_contains:
         filters.append({"op": "contains", "field": "title", "value": params.title_contains})
+    
+    # Exclude completed tickets by default (status 5 is typically Complete)
+    if params.exclude_completed:
+        filters.append({"op": "notequal", "field": "status", "value": 5})
     
     if not filters:
         # Default: get recent tickets
@@ -567,11 +573,14 @@ async def autotask_search_companies(params: SearchCompaniesInput, ctx: Context |
     
     if params.name_contains:
         filters.append({"op": "contains", "field": "companyName", "value": params.name_contains})
+    
+    # Always apply active status filter (defaults to True)
     if params.is_active is not None:
         filters.append({"op": "eq", "field": "isActive", "value": params.is_active})
     
     if not filters:
-        filters.append({"op": "exist", "field": "id"})
+        # If no filters at all, still filter by active
+        filters.append({"op": "eq", "field": "isActive", "value": True})
     
     result = _query_entity("Companies", filters)
     
@@ -621,8 +630,13 @@ async def autotask_search_contacts(params: SearchContactsInput) -> dict:
     if params.last_name:
         filters.append({"op": "contains", "field": "lastName", "value": params.last_name})
     
+    # Always apply active status filter (defaults to True)
+    if params.is_active is not None:
+        filters.append({"op": "eq", "field": "isActive", "value": params.is_active})
+    
     if not filters:
-        filters.append({"op": "exist", "field": "id"})
+        # If no filters at all, still filter by active
+        filters.append({"op": "eq", "field": "isActive", "value": True})
     
     result = _query_entity("Contacts", filters)
     
