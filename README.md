@@ -52,32 +52,12 @@ python test_autotask_connection.py
      "AUTOTASK_USERNAME": "your-username@company.com",
         "AUTOTASK_SECRET": "your-api-secret-here",
         "AUTOTASK_INTEGRATION_CODE": "your-integration-code-here",
-        "AUTOTASK_API_URL": "https://webservices5.autotask.net/ATServicesRest/v1.0",
-        "AUTOTASK_IMPERSONATION_RESOURCE_ID": "OPTIONAL_RESOURCE_ID" 
+        "AUTOTASK_API_URL": "https://webservices5.autotask.net/ATServicesRest/v1.0"
       }
     }
   }
 }
 ```
-
-### Advanced: Resource Attribution (Impersonation)
-
-By default, all actions (notes, tickets, time entries) are recorded as performed by the **API User**. To attribute actions to a specific human resource (e.g., "Bob Smith"), use the `AUTOTASK_IMPERSONATION_RESOURCE_ID` environment variable.
-
-**How it works:**
-When set, the server adds the `ImpersonationResourceId` header to every API request.
-
-**Security & Requirements:**
-1.  **Permissions:** Your API User must have "Impersonate Resource" permissions in Autotask.
-2.  **Attribution:** **ALL** actions performed by this server instance will be attributed to the specified Resource ID.
-3.  **Documentation:** Refer to the Autotask REST API documentation under **General Topics > Impersonation** for details on required permissions.
-
-**⚠️ Security Warning:**
-Enabling impersonation means the MCP server effectively "becomes" that user for all operations.
-- **No Audit Trail Distinction:** Autotask logs will show the impersonated user as the actor, making it impossible to distinguish between actions taken by the real user via the UI and actions taken by this AI agent.
-- **Shared Environments:** Do not enable this in a shared environment where multiple people might access the same MCP server instance, as they would all be acting as the impersonated user.
-- **Least Privilege:** Only enable this if you specifically need the AI's actions to appear as if they came from a human user (e.g., for customer-facing notes).
-
 ### Step 4: Restart Claude Desktop
 Completely quit and restart Claude Desktop.
 
