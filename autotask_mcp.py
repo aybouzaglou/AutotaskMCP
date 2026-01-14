@@ -60,7 +60,7 @@ def _get_headers() -> Dict[str, str]:
         "Content-Type": "application/json",
         "UserName": AUTOTASK_USERNAME,
         "Secret": AUTOTASK_SECRET,
-        "ApiIntegrationCode": AUTOTASK_INTEGRATION_CODE,
+        "ApiIntegrationcode": AUTOTASK_INTEGRATION_CODE,
     }
 
 
@@ -126,7 +126,7 @@ def _make_request(
 
 
 
-def _query_entity(entity: str, filters: List[Dict], fields: Optional[List[str]] = None) -> Dict[str, Any]:
+def _query_entity(entity: str, filters: List[Dict], fields: Optional[List[str]] = None, max_records: int = 50) -> Dict[str, Any]:
     """
     Query an Autotask entity using the query endpoint.
     
@@ -134,14 +134,20 @@ def _query_entity(entity: str, filters: List[Dict], fields: Optional[List[str]] 
         entity: Entity name (e.g., "Tickets", "Companies", "Resources")
         filters: List of filter dictionaries with 'field', 'op', 'value'
         fields: Optional list of fields to return
+        max_records: Maximum records to return (1-500, default 50)
     
     Returns:
         API response dictionary
     """
-    query_body: Dict[str, Any] = {"filter": filters}
+    # Autotask REST API query body structure per docs
+    query_body: Dict[str, Any] = {
+        "MaxRecords": max_records,
+        "filter": filters,
+    }
     if fields:
-        query_body["includeFields"] = fields
+        query_body["IncludeFields"] = fields
     
+    logger.debug(f"Query {entity}: filters={filters}, max_records={max_records}")
     return _make_request("POST", f"{entity}/query", data=query_body)
 
 
@@ -310,21 +316,21 @@ async def autotask_search_tickets(params: SearchTicketsInput, ctx: Context | Non
     filters = []
     
     if params.company_id:
-        filters.append({"field": "companyID", "op": "eq", "value": params.company_id})
+        filters.append({"op": "eq", "field": "companyID", "value": params.company_id})
     if params.status:
-        filters.append({"field": "status", "op": "eq", "value": params.status})
+        filters.append({"op": "eq", "field": "status", "value": params.status})
     if params.priority:
-        filters.append({"field": "priority", "op": "eq", "value": params.priority})
+        filters.append({"op": "eq", "field": "priority", "value": params.priority})
     if params.assigned_resource_id:
-        filters.append({"field": "assignedResourceID", "op": "eq", "value": params.assigned_resource_id})
+        filters.append({"op": "eq", "field": "assignedResourceID", "value": params.assigned_resource_id})
     if params.queue_id:
-        filters.append({"field": "queueID", "op": "eq", "value": params.queue_id})
+        filters.append({"op": "eq", "field": "queueID", "value": params.queue_id})
     if params.title_contains:
-        filters.append({"field": "title", "op": "contains", "value": params.title_contains})
+        filters.append({"op": "contains", "field": "title", "value": params.title_contains})
     
     if not filters:
         # Default: get recent tickets
-        filters.append({"field": "id", "op": "gt", "value": 0})
+        filters.append({"op": "exist", "field": "id"})
     
     result = _query_entity("Tickets", filters)
     
@@ -560,12 +566,12 @@ async def autotask_search_companies(params: SearchCompaniesInput, ctx: Context |
     filters = []
     
     if params.name_contains:
-        filters.append({"field": "companyName", "op": "contains", "value": params.name_contains})
+        filters.append({"op": "contains", "field": "companyName", "value": params.name_contains})
     if params.is_active is not None:
-        filters.append({"field": "isActive", "op": "eq", "value": params.is_active})
+        filters.append({"op": "eq", "field": "isActive", "value": params.is_active})
     
     if not filters:
-        filters.append({"field": "isActive", "op": "eq", "value": True})
+        filters.append({"op": "exist", "field": "id"})
     
     result = _query_entity("Companies", filters)
     
@@ -607,16 +613,16 @@ async def autotask_search_contacts(params: SearchContactsInput) -> dict:
     filters = []
     
     if params.company_id:
-        filters.append({"field": "companyID", "op": "eq", "value": params.company_id})
+        filters.append({"op": "eq", "field": "companyID", "value": params.company_id})
     if params.email_contains:
-        filters.append({"field": "emailAddress", "op": "contains", "value": params.email_contains})
+        filters.append({"op": "contains", "field": "emailAddress", "value": params.email_contains})
     if params.first_name:
-        filters.append({"field": "firstName", "op": "contains", "value": params.first_name})
+        filters.append({"op": "contains", "field": "firstName", "value": params.first_name})
     if params.last_name:
-        filters.append({"field": "lastName", "op": "contains", "value": params.last_name})
+        filters.append({"op": "contains", "field": "lastName", "value": params.last_name})
     
     if not filters:
-        filters.append({"field": "isActive", "op": "eq", "value": 1})
+        filters.append({"op": "exist", "field": "id"})
     
     result = _query_entity("Contacts", filters)
     
@@ -640,16 +646,16 @@ async def autotask_search_resources(params: SearchResourcesInput) -> dict:
     filters = []
     
     if params.first_name:
-        filters.append({"field": "firstName", "op": "contains", "value": params.first_name})
+        filters.append({"op": "contains", "field": "firstName", "value": params.first_name})
     if params.last_name:
-        filters.append({"field": "lastName", "op": "contains", "value": params.last_name})
+        filters.append({"op": "contains", "field": "lastName", "value": params.last_name})
     if params.email:
-        filters.append({"field": "email", "op": "contains", "value": params.email})
+        filters.append({"op": "contains", "field": "email", "value": params.email})
     if params.is_active is not None:
-        filters.append({"field": "isActive", "op": "eq", "value": params.is_active})
+        filters.append({"op": "eq", "field": "isActive", "value": params.is_active})
     
     if not filters:
-        filters.append({"field": "isActive", "op": "eq", "value": True})
+        filters.append({"op": "exist", "field": "id"})
     
     result = _query_entity("Resources", filters)
     
@@ -742,10 +748,10 @@ async def autotask_search_roles(
     filters = []
     
     if is_active is not None:
-        filters.append({"field": "isActive", "op": "eq", "value": is_active})
+        filters.append({"op": "eq", "field": "isActive", "value": is_active})
     
     if not filters:
-        filters.append({"field": "isActive", "op": "eq", "value": True})
+        filters.append({"op": "exist", "field": "id"})
     
     result = _query_entity("Roles", filters)
     
@@ -781,14 +787,14 @@ async def autotask_search_contracts(params: SearchContractsInput) -> dict:
     filters = []
     
     if params.company_id:
-        filters.append({"field": "companyID", "op": "eq", "value": params.company_id})
+        filters.append({"op": "eq", "field": "companyID", "value": params.company_id})
     if params.contract_name:
-        filters.append({"field": "contractName", "op": "contains", "value": params.contract_name})
+        filters.append({"op": "contains", "field": "contractName", "value": params.contract_name})
     if params.is_active is not None:
-        filters.append({"field": "isActive", "op": "eq", "value": params.is_active})
+        filters.append({"op": "eq", "field": "isActive", "value": params.is_active})
     
     if not filters:
-        filters.append({"field": "isActive", "op": "eq", "value": True})
+        filters.append({"op": "exist", "field": "id"})
     
     result = _query_entity("Contracts", filters)
     
@@ -823,12 +829,12 @@ async def autotask_search_billing_codes(params: SearchBillingCodesInput) -> dict
     filters = []
     
     if params.name:
-        filters.append({"field": "name", "op": "contains", "value": params.name})
+        filters.append({"op": "contains", "field": "name", "value": params.name})
     if params.is_active is not None:
-        filters.append({"field": "isActive", "op": "eq", "value": params.is_active})
+        filters.append({"op": "eq", "field": "isActive", "value": params.is_active})
     
     if not filters:
-        filters.append({"field": "isActive", "op": "eq", "value": True})
+        filters.append({"op": "exist", "field": "id"})
     
     result = _query_entity("BillingCodes", filters)
     
