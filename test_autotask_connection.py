@@ -11,7 +11,7 @@ import httpx
 from typing import Dict, Any
 
 def get_credentials() -> Dict[str, str]:
-    """Get credentials from environment or prompt user."""
+    """Get credentials from environment variables."""
     creds = {}
     
     print("=" * 60)
@@ -19,29 +19,35 @@ def get_credentials() -> Dict[str, str]:
     print("=" * 60)
     print()
     
-    # Try to get from environment first
+    # Get from environment
     creds['username'] = os.getenv('AUTOTASK_USERNAME', '')
     creds['secret'] = os.getenv('AUTOTASK_SECRET', '')
     creds['integration_code'] = os.getenv('AUTOTASK_INTEGRATION_CODE', '')
-    creds['api_url'] = os.getenv('AUTOTASK_API_URL', '')
+    creds['api_url'] = os.getenv('AUTOTASK_API_URL', 'https://webservices14.autotask.net/ATServicesRest/v1.0')
     
-    # Prompt for missing values
+    # Check for missing required values
+    missing = []
     if not creds['username']:
-        creds['username'] = input("Autotask Username: ").strip()
-    
+        missing.append('AUTOTASK_USERNAME')
     if not creds['secret']:
-        creds['secret'] = input("Autotask Secret: ").strip()
-    
+        missing.append('AUTOTASK_SECRET')
     if not creds['integration_code']:
-        creds['integration_code'] = input("Autotask Integration Code: ").strip()
+        missing.append('AUTOTASK_INTEGRATION_CODE')
     
-    if not creds['api_url']:
-        print("\nCommon API URLs:")
-        print("  1. https://webservices2.autotask.net/ATServicesRest/v1.0")
-        print("  2. https://webservices4.autotask.net/ATServicesRest/v1.0")
-        print("  3. https://webservices5.autotask.net/ATServicesRest/v1.0")
-        print("  4. https://webservices11.autotask.net/ATServicesRest/v1.0")
-        creds['api_url'] = input("\nAutotask API URL: ").strip()
+    if missing:
+        print("❌ Missing required environment variables:")
+        for var in missing:
+            print(f"   - {var}")
+        print("\nSet them with:")
+        print('  export AUTOTASK_USERNAME="your-username"')
+        print('  export AUTOTASK_SECRET="your-secret"')
+        print('  export AUTOTASK_INTEGRATION_CODE="your-code"')
+        print('  export AUTOTASK_API_URL="https://webservicesXX.autotask.net/ATServicesRest/v1.0"')
+        sys.exit(1)
+    
+    print(f"Using API URL: {creds['api_url']}")
+    print(f"Username: {creds['username']}")
+    print()
     
     return creds
 

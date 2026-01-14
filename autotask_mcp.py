@@ -17,12 +17,23 @@ Authentication: Uses username, secret, and API integration code in headers.
 
 import os
 import json
+import logging
 import httpx
 from typing import Optional, List, Dict, Any, Annotated
 from datetime import datetime, timezone
 from pydantic import BaseModel, Field
-from fastmcp import FastMCP
+from fastmcp import FastMCP, Context
 from fastmcp.exceptions import ToolError
+
+# =============================================================================
+# LOGGING SETUP
+# =============================================================================
+
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger("autotask_mcp")
 
 # Initialize MCP server
 mcp = FastMCP("autotask", mask_error_details=True)
@@ -63,6 +74,10 @@ def _make_request(
     url = f"{AUTOTASK_API_URL}/{endpoint}"
     headers = _get_headers()
     
+    logger.debug(f"API Request: {method} {url}")
+    if data:
+        logger.debug(f"Request body: {json.dumps(data, default=str)}")
+    
     try:
         with httpx.Client(timeout=API_TIMEOUT) as client:
             if method.upper() == "GET":
@@ -76,10 +91,14 @@ def _make_request(
             elif method.upper() == "DELETE":
                 response = client.delete(url, headers=headers)
             else:
+                logger.error(f"Unsupported HTTP method: {method}")
                 return {"error": f"Unsupported HTTP method: {method}"}
+            
+            logger.debug(f"API Response: {response.status_code}")
             
             # Log response for debugging
             if response.status_code >= 400:
+                logger.error(f"API error {response.status_code}: {response.text[:500]}")
                 return {
                     "error": f"API returned status {response.status_code}",
                     "status_code": response.status_code,
@@ -90,14 +109,19 @@ def _make_request(
             
             if response.text:
                 try:
-                    return response.json()
+                    result = response.json()
+                    logger.debug(f"API success, items: {len(result.get('items', []))} item: {bool(result.get('item'))}")
+                    return result
                 except json.JSONDecodeError:
+                    logger.error(f"JSON decode error: {response.text[:200]}")
                     return {"error": "Failed to parse API response", "raw_response": response.text}
             return {"success": True}
             
     except httpx.TimeoutException:
+        logger.error(f"Request timed out: {url}")
         return {"error": "Request timed out"}
     except httpx.RequestError as e:
+        logger.error(f"Request failed: {str(e)}")
         return {"error": f"Request failed: {str(e)}"}
 
 
@@ -263,19 +287,25 @@ class SearchResourcesInput(BaseModel):
 
 @mcp.tool
 async def autotask_get_ticket(
-    ticket_id: Annotated[int, Field(description="The ticket ID to retrieve")]
+    ticket_id: Annotated[int, Field(description="The ticket ID to retrieve")],
+    ctx: Context | None = None,
 ) -> dict:
     """Get a ticket by ID from Autotask."""
     result = _make_request("GET", f"Tickets/{ticket_id}")
     
     if "error" in result:
+        if ctx:
+            await ctx.error(
+                f"get_ticket failed: {result['error']}",
+                extra={"status_code": result.get("status_code"), "response_text": result.get("response_text")},
+            )
         raise ToolError(f"Failed to get ticket {ticket_id}: {result['error']}")
     
     return result.get("item", result)
 
 
 @mcp.tool
-async def autotask_search_tickets(params: SearchTicketsInput) -> dict:
+async def autotask_search_tickets(params: SearchTicketsInput, ctx: Context | None = None) -> dict:
     """Search for tickets in Autotask with various filters."""
     filters = []
     
@@ -299,6 +329,11 @@ async def autotask_search_tickets(params: SearchTicketsInput) -> dict:
     result = _query_entity("Tickets", filters)
     
     if "error" in result:
+        if ctx:
+            await ctx.error(
+                f"search_tickets failed: {result['error']}",
+                extra={"status_code": result.get("status_code"), "response_text": result.get("response_text"), "filters": filters},
+            )
         raise ToolError(f"Failed to search tickets: {result['error']}")
     
     items = result.get("items", [])
@@ -520,7 +555,7 @@ async def autotask_create_time_entry(params: CreateTimeEntryInput) -> dict:
 # =============================================================================
 
 @mcp.tool
-async def autotask_search_companies(params: SearchCompaniesInput) -> dict:
+async def autotask_search_companies(params: SearchCompaniesInput, ctx: Context | None = None) -> dict:
     """Search for companies in Autotask."""
     filters = []
     
@@ -535,6 +570,11 @@ async def autotask_search_companies(params: SearchCompaniesInput) -> dict:
     result = _query_entity("Companies", filters)
     
     if "error" in result:
+        if ctx:
+            await ctx.error(
+                f"search_companies failed: {result['error']}",
+                extra={"status_code": result.get("status_code"), "response_text": result.get("response_text"), "filters": filters},
+            )
         raise ToolError(f"Failed to search companies: {result['error']}")
     
     items = result.get("items", [])
