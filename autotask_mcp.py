@@ -350,7 +350,7 @@ async def autotask_search_tickets(params: SearchTicketsInput, ctx: Context | Non
     # Exclude completed tickets by default (status 5 = Complete)
     # Only skip if user explicitly sets status filter OR sets exclude_completed=False
     if params.exclude_completed and not params.status:
-        filters.append({"op": "notequal", "field": "status", "value": 5})
+        filters.append({"op": "noteq", "field": "status", "value": 5})
     
     if not filters:
         # Default: get recent tickets
