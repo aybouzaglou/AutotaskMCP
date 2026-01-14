@@ -3,7 +3,7 @@
     "autotask": {
       "command": "python",
       "args": [
-        "C:\\AutotaskMCP\\autotask_mcp.py"
+        "/Users/avrahambouzaglou/AutotaskMCP/autotask_mcp.py"
       ],
       "env": {
       "AUTOTASK_USERNAME": "your-username@company.com",

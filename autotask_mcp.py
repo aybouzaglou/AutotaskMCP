@@ -7,7 +7,7 @@ company and contact management, time entries, ticket notes, and more.
 
 Key Features:
 - Ticket CRUD operations
-- TicketNotes creation (proper endpoint: /TicketNotes)
+- TicketNotes creation (proper endpoint: /Tickets/{id}/Notes)
 - TimeEntries creation (proper endpoint: /TimeEntries)
 - Company and Contact search
 - Resource lookup
@@ -402,7 +402,7 @@ async def autotask_create_ticket_note(params: CreateTicketNoteInput) -> dict:
     """
     Create a note on a ticket in Autotask.
     
-    Uses the /TicketNotes endpoint (not /Tickets/{id}/Notes).
+    Uses the /Tickets/{id}/Notes endpoint (parent-child pattern).
     
     Required fields:
     - ticketId: The ticket to add the note to
@@ -424,7 +424,6 @@ async def autotask_create_ticket_note(params: CreateTicketNoteInput) -> dict:
     Use autotask_get_picklist_values to get exact values for your instance.
     """
     note_data = {
-        "ticketID": params.ticket_id,
         "description": params.description,
         "noteType": params.note_type,
         "publish": params.publish,
@@ -433,7 +432,7 @@ async def autotask_create_ticket_note(params: CreateTicketNoteInput) -> dict:
     if params.title:
         note_data["title"] = params.title
     
-    result = _make_request("POST", "TicketNotes", data=note_data)
+    result = _make_request("POST", f"Tickets/{params.ticket_id}/Notes", data=note_data)
     
     if "error" in result:
         raise ToolError(f"Failed to create ticket note: {result['error']}")
@@ -730,132 +729,223 @@ async def autotask_search_roles(
 
 
 # =============================================================================
-# COMBINED HELPER TOOLS
+# TOOLS - CONTRACTS
 # =============================================================================
 
-class UpdateTicketStatusAndNoteInput(BaseModel):
-    """Input for updating ticket status and adding a note in one operation."""
-    ticket_id: int = Field(..., description="The ticket ID to update")
-    status: int = Field(..., description="New status ID")
-    note_description: str = Field(..., description="Note to add explaining the status change")
-    note_type: int = Field(1, description="Note type ID (default: 1)")
-    publish: int = Field(1, description="Note publish setting (default: 1 = All Autotask Users)")
+class SearchContractsInput(BaseModel):
+    """Input for searching contracts."""
+    company_id: Optional[int] = Field(None, description="Filter by company ID")
+    contract_name: Optional[str] = Field(None, description="Filter by contract name")
+    is_active: Optional[bool] = Field(True, description="Filter by active status")
+    max_results: Optional[int] = Field(50, description="Maximum number of results")
 
 
 @mcp.tool
-async def autotask_update_ticket_status_with_note(params: UpdateTicketStatusAndNoteInput) -> dict:
+async def autotask_search_contracts(params: SearchContractsInput) -> dict:
     """
-    Update a ticket's status and add a note in one operation.
+    Search for contracts in Autotask.
     
-    This is a convenience tool that:
-    1. Updates the ticket status
-    2. Adds a note explaining the change
-    
-    Common status values (vary by instance - use autotask_get_picklist_values):
-    - 1 = New
-    - 5 = In Progress
-    - 8 = Waiting Customer
-    - Complete (varies)
+    Useful for finding the correct contract_id for time entries.
     """
-    results = []
+    filters = []
     
-    # Step 1: Update ticket status
-    update_data = {"id": params.ticket_id, "status": params.status}
-    status_result = _make_request("PATCH", "Tickets", data=update_data)
+    if params.company_id:
+        filters.append({"field": "companyID", "op": "eq", "value": params.company_id})
+    if params.contract_name:
+        filters.append({"field": "contractName", "op": "contains", "value": params.contract_name})
+    if params.is_active is not None:
+        filters.append({"field": "isActive", "op": "eq", "value": params.is_active})
     
-    status_success = "error" not in status_result
-    if not status_success:
-        results.append({"step": "status_update", "success": False, "error": status_result['error']})
-    else:
-        results.append({"step": "status_update", "success": True, "new_status": params.status})
+    if not filters:
+        filters.append({"field": "isActive", "op": "eq", "value": True})
     
-    # Step 2: Add note
-    note_data = {
-        "ticketID": params.ticket_id,
-        "description": params.note_description,
-        "noteType": params.note_type,
-        "publish": params.publish,
-    }
-    note_result = _make_request("POST", "TicketNotes", data=note_data)
+    result = _query_entity("Contracts", filters)
     
-    note_success = "error" not in note_result
-    if not note_success:
-        results.append({"step": "note_creation", "success": False, "error": note_result['error']})
-    else:
-        note_id = note_result.get("item", {}).get("id")
-        results.append({"step": "note_creation", "success": True, "note_id": note_id})
+    if "error" in result:
+        raise ToolError(f"Failed to search contracts: {result['error']}")
     
-    return {
-        "ticket_id": params.ticket_id,
-        "all_succeeded": status_success and note_success,
-        "results": results
-    }
+    items = result.get("items", [])
+    if params.max_results:
+        items = items[:params.max_results]
+    
+    return {"count": len(items), "contracts": items}
 
 
-class LogTimeAndUpdateStatusInput(BaseModel):
-    """Input for logging time and optionally updating status."""
-    ticket_id: int = Field(..., description="The ticket ID")
-    resource_id: int = Field(..., description="Resource ID who performed the work")
-    role_id: int = Field(..., description="Role ID for the resource")
-    hours_worked: float = Field(..., description="Hours worked")
-    summary_notes: str = Field(..., description="Summary of work performed")
-    new_status: Optional[int] = Field(None, description="Optionally update ticket status")
-    date_worked: Optional[str] = Field(None, description="Date worked (defaults to today)")
+# =============================================================================
+# TOOLS - BILLING CODES (Work Types)
+# =============================================================================
+
+class SearchBillingCodesInput(BaseModel):
+    """Input for searching billing codes (Work Types)."""
+    name: Optional[str] = Field(None, description="Filter by billing code name")
+    is_active: Optional[bool] = Field(True, description="Filter by active status")
+    max_results: Optional[int] = Field(50, description="Maximum number of results")
 
 
 @mcp.tool
-async def autotask_log_time_and_update_status(params: LogTimeAndUpdateStatusInput) -> dict:
+async def autotask_search_billing_codes(params: SearchBillingCodesInput) -> dict:
     """
-    Log time to a ticket and optionally update its status.
+    Search for billing codes (Work Types) in Autotask.
     
-    This is a convenience tool that:
-    1. Creates a time entry for the ticket
-    2. Optionally updates the ticket status
-    
-    Requires:
-    - Valid resource_id
-    - Valid role_id (must be associated with the resource)
-    - hours_worked > 0 and <= 24
+    Useful for finding the correct billing_code_id for time entries.
     """
-    results = []
+    filters = []
     
-    # Step 1: Create time entry
-    time_entry_data = {
-        "ticketID": params.ticket_id,
-        "resourceID": params.resource_id,
-        "roleID": params.role_id,
-        "hoursWorked": params.hours_worked,
-        "summaryNotes": params.summary_notes,
-        "dateWorked": params.date_worked or _format_date_for_api(),
-    }
+    if params.name:
+        filters.append({"field": "name", "op": "contains", "value": params.name})
+    if params.is_active is not None:
+        filters.append({"field": "isActive", "op": "eq", "value": params.is_active})
     
-    time_result = _make_request("POST", "TimeEntries", data=time_entry_data)
+    if not filters:
+        filters.append({"field": "isActive", "op": "eq", "value": True})
     
-    time_success = "error" not in time_result
-    if not time_success:
-        results.append({"step": "time_entry", "success": False, "error": time_result['error']})
-    else:
-        entry_id = time_result.get("item", {}).get("id")
-        results.append({"step": "time_entry", "success": True, "time_entry_id": entry_id, "hours": params.hours_worked})
+    result = _query_entity("BillingCodes", filters)
     
-    # Step 2: Update status if requested
-    status_success = True
-    if params.new_status is not None:
-        update_data = {"id": params.ticket_id, "status": params.new_status}
-        status_result = _make_request("PATCH", "Tickets", data=update_data)
+    if "error" in result:
+        raise ToolError(f"Failed to search billing codes: {result['error']}")
+    
+    items = result.get("items", [])
+    if params.max_results:
+        items = items[:params.max_results]
+    
+    return {"count": len(items), "billing_codes": items}
+
+
+# =============================================================================
+# RESOURCES
+# =============================================================================
+
+@mcp.resource("autotask://picklist/{entity}/{field}")
+async def get_picklist_resource(entity: str, field: str) -> str:
+    """
+    Get picklist values for a specific entity and field.
+    Example: autotask://picklist/Tickets/status
+    """
+    # Reuse the logic from the tool, but return a formatted string
+    result = _make_request("GET", f"{entity}/entityInformation/fields")
+    
+    if "error" in result:
+        return f"Error fetching picklist: {result['error']}"
+    
+    fields_data = result.get("fields", [])
+    target_field = next((f for f in fields_data if f.get("name", "").lower() == field.lower()), None)
+    
+    if not target_field:
+        return f"Field '{field}' not found in {entity}."
+    
+    if not target_field.get("isPickList"):
+        return f"Field '{field}' is not a picklist field."
+    
+    values = target_field.get("picklistValues", [])
+    
+    # Format as a readable list
+    lines = [f"# Picklist Values for {entity}.{field}"]
+    for val in values:
+        label = val.get("label", "Unknown")
+        val_id = val.get("value", "Unknown")
+        is_default = " (Default)" if val.get("isDefaultValue") else ""
+        lines.append(f"- {val_id}: {label}{is_default}")
         
-        status_success = "error" not in status_result
-        if not status_success:
-            results.append({"step": "status_update", "success": False, "error": status_result['error']})
-        else:
-            results.append({"step": "status_update", "success": True, "new_status": params.new_status})
-    
-    return {
-        "ticket_id": params.ticket_id,
-        "all_succeeded": time_success and status_success,
-        "results": results
-    }
+    return "\n".join(lines)
 
+
+@mcp.resource("autotask://user/info")
+async def get_user_info() -> str:
+    """Get information about the current API user."""
+    result = _make_request("GET", "ThresholdInformation")
+    if "error" in result:
+        return f"Error fetching user info: {result['error']}"
+        
+    return json.dumps(result, indent=2)
+
+
+@mcp.resource("autotask://billing-codes")
+async def get_billing_codes_resource() -> str:
+    """
+    Get a list of all active Billing Codes (Work Types).
+    Useful for finding the correct billing_code_id for time entries.
+    """
+    filters = [{"field": "isActive", "op": "eq", "value": True}]
+    result = _query_entity("BillingCodes", filters)
+    
+    if "error" in result:
+        return f"Error fetching billing codes: {result['error']}"
+    
+    items = result.get("items", [])
+    lines = ["# Active Billing Codes (Work Types)"]
+    for item in items:
+        lines.append(f"- {item.get('id')}: {item.get('name')}")
+        
+    return "\n".join(lines)
+
+
+@mcp.resource("autotask://roles")
+async def get_roles_resource() -> str:
+    """
+    Get a list of all active Roles.
+    Useful for finding the correct role_id for time entries.
+    """
+    filters = [{"field": "isActive", "op": "eq", "value": True}]
+    result = _query_entity("Roles", filters)
+    
+    if "error" in result:
+        return f"Error fetching roles: {result['error']}"
+    
+    items = result.get("items", [])
+    lines = ["# Active Roles"]
+    for item in items:
+        lines.append(f"- {item.get('id')}: {item.get('name')}")
+        
+    return "\n".join(lines)
+
+
+@mcp.resource("autotask://queues")
+async def get_queues_resource() -> str:
+    """
+    Get a list of all Ticket Queues.
+    Useful for finding the correct queue_id for tickets.
+    """
+    # Queues are best retrieved from the Ticket entity picklist
+    result = _make_request("GET", "Tickets/entityInformation/fields")
+    
+    if "error" in result:
+        return f"Error fetching queues: {result['error']}"
+    
+    fields = result.get("fields", [])
+    queue_field = next((f for f in fields if f.get("name") == "queueID"), None)
+    
+    if not queue_field:
+        return "Error: queueID field not found in Tickets entity."
+        
+    values = queue_field.get("picklistValues", [])
+    lines = ["# Ticket Queues"]
+    for val in values:
+        lines.append(f"- {val.get('value')}: {val.get('label')}")
+        
+    return "\n".join(lines)
+
+
+# =============================================================================
+# PROMPTS
+# =============================================================================
+
+@mcp.prompt()
+def create_ticket_guide() -> str:
+    """
+    Returns a system prompt that helps the AI guide the user through creating a ticket.
+    """
+    return """You are an expert Autotask Ticket Manager.
+When helping a user create a ticket, follow these steps:
+
+1. **Identify the Company**: Ask for the company name if not provided. Use `autotask_search_companies` to find the ID.
+2. **Identify the Contact**: If a contact is mentioned, find their ID using `autotask_search_contacts`.
+3. **Determine Status and Priority**:
+   - Check available statuses using the resource `autotask://picklist/Tickets/status`
+   - Check available priorities using the resource `autotask://picklist/Tickets/priority`
+4. **Draft the Ticket**: Confirm the details (Title, Description, Company, Priority) before calling `autotask_create_ticket`.
+
+Always prefer using the `autotask://picklist/...` resources to find correct IDs for dropdown fields.
+"""
 
 # =============================================================================
 # MAIN
