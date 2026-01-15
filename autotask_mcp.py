@@ -276,6 +276,7 @@ class SearchContactsInput(BaseModel):
     email_contains: Optional[str] = Field(None, description="Filter by email containing this text")
     first_name: Optional[str] = Field(None, description="Filter by first name")
     last_name: Optional[str] = Field(None, description="Filter by last name")
+    phone_contains: Optional[str] = Field(None, description="Filter by phone number containing this text (searches phone, mobilePhone, alternatePhone, and faxNumber)")
     is_active: Optional[bool] = Field(True, description="Filter by active status (default: True)")
     max_results: Optional[int] = Field(50, description="Maximum number of results")
 
@@ -647,7 +648,19 @@ async def autotask_search_contacts(params: SearchContactsInput) -> dict:
         filters.append({"op": "contains", "field": "firstName", "value": params.first_name})
     if params.last_name:
         filters.append({"op": "contains", "field": "lastName", "value": params.last_name})
-    
+
+    # Phone number search across all phone fields using OR logic
+    if params.phone_contains:
+        filters.append({
+            "op": "or",
+            "items": [
+                {"op": "contains", "field": "phone", "value": params.phone_contains},
+                {"op": "contains", "field": "mobilePhone", "value": params.phone_contains},
+                {"op": "contains", "field": "alternatePhone", "value": params.phone_contains},
+                {"op": "contains", "field": "faxNumber", "value": params.phone_contains}
+            ]
+        })
+
     # Always apply active status filter (defaults to True)
     if params.is_active is not None:
         filters.append({"op": "eq", "field": "isActive", "value": params.is_active})
